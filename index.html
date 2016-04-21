@@ -1,0 +1,303 @@
+<div class="ply-TeamItems">
+  <div class="ply-TeamItem ply-TeamItem-team0">
+    <strong>Team 0</strong>
+    <div class="ply-PlayerItems ply-PlayerItems-team0"></div>
+  </div>
+
+  <div class="ply-TeamItem ply-TeamItem-team1">
+    <strong>Team 1</strong>
+    <div class="ply-PlayerItems ply-PlayerItems-team1"></div>
+  </div>
+</div>
+
+
+
+<style>
+.ply-TeamItems {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-around;
+}
+
+.ply-PlayerItem {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-around;
+}
+
+.ply-PlayerItem + .ply-PlayerItem {
+  margin-top: 30px;
+}
+
+.ply-PlayerItem_Data {
+  padding-right: 30px;
+  align-self: center;
+}
+
+.ply-PlayerItem_Heatmap {
+  position: relative;
+
+  width: 290px;
+}
+
+.ply-PlayerItem_Heatmap canvas {
+  width: 100%;
+  height: 100%;
+
+  z-index: 1;
+}
+
+.ply-PlayerItem_Heatmap::before {
+  content: '';
+
+  display: block;
+  padding-bottom: calc(100% / (1003 / 709));
+}
+
+.ply-PlayerItem_Heatmap::after {
+  content: '';
+
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+
+  z-index: 2;
+
+  background-image: url(//static.rocketleaguereplays.com/img/arena_overlay2.png);
+  background-repeat: no-repeat;
+  background-size: 100%;
+}
+</style>
+
+<script src="https://cdn.rawgit.com/pa7/heatmap.js/master/build/heatmap.min.js"></script>
+<script>
+/**
+Code taken from the Rocket League Replays application[1]. Edit the user ID below to change the data.
+
+[1]: https://github.com/rocket-league-replays/rocket-league-replays/blob/d4b9f5b9957d1e9f939a674809baa0a65cc9410d/rocket_league/assets/js/app.js#L63-L280
+*/
+
+'use strict'
+
+let lastReplay
+const userID = 1
+const interval = 10000  // Check every 10 seconds
+
+/**
+  REPLAY DATA API CALL
+*/
+
+function get_replay_data() {
+  // Want to test this with a 3v3 match? Change the URL to this:
+  // https://www.rocketleaguereplays.com/api/replays/38865/
+
+  get_data(`https://www.rocketleaguereplays.com/api/latest-replay/${userID}/`, function (data) {
+    if (data.id === lastReplay) {
+      console.log('Replay is the same.')
+      return
+    }
+
+    // Clear the team data.
+    document.querySelector('.ply-PlayerItems-team0').innerHTML = ''
+    document.querySelector('.ply-PlayerItems-team1').innerHTML = ''
+
+    lastReplay = data.id
+
+    // Generate a stats element for each player.
+    data.player_set.forEach(function (item) {
+      const playersContainer = document.querySelector(`.ply-PlayerItems-team${item.team}`)
+
+      if (!playersContainer) {
+        console.error(`Unable to find a player container for Team ${item.team}.`)
+      }
+
+      // Create the player item.
+      const playerContainer = document.createElement('div')
+      playerContainer.classList.add('ply-PlayerItem')
+
+      const playerData = document.createElement('div')
+      playerData.classList.add('ply-PlayerItem_Data')
+      playerData.innerHTML = `
+        Name: ${item.player_name}<br>
+        Goals: ${item.goals}<br>
+        Assists: ${item.assists}<br>
+        Saves: ${item.saves}<br>
+        Shots: ${item.shots}
+      `
+      playerContainer.appendChild(playerData)
+
+      const playerHeatmap = document.createElement('div')
+      playerHeatmap.classList.add('ply-PlayerItem_Heatmap')
+      playerHeatmap.setAttribute('data-actor-id', item.actor_id)
+      playerContainer.appendChild(playerHeatmap)
+
+      playersContainer.appendChild(playerContainer)
+    })
+
+    // If we have a heatmap file, generate the heatmaps.
+    if (data.heatmap_json_file) {
+      get_data(data.heatmap_json_file, render_heatmap)
+    }
+  })
+}
+
+// Initial load.
+get_replay_data()
+
+// Begin polling for new data.
+setInterval(get_replay_data, interval)
+
+/**
+  HELPER FUNCTIONS
+*/
+
+function get_data(url, callback) {
+  const request = new XMLHttpRequest()
+  request.open('GET', url, true)
+
+  request.onload = function () {
+    if (this.status >= 200 && this.status < 400) {
+      // Success!
+      const data = JSON.parse(this.response)
+      callback(data)
+    }
+  }
+
+  request.send()
+}
+
+/**
+  HEATMAP RENDERING
+*/
+
+function render_heatmap (data) {
+  const elements = document.querySelectorAll('.ply-PlayerItem_Heatmap')
+
+  for (const index in elements) {
+    if (!elements.hasOwnProperty(index)) {
+      return
+    }
+
+    const el = elements[index]
+
+    let radius = 20
+    let blur
+
+    if (el.offsetWidth > 300) {
+      radius = 30
+      blur = 0.45
+    }
+
+    const heatmap = h337.create({
+      container: el,
+      radius,
+      blur,
+      minOpacity: 0.1,
+      maxOpacity: 1,
+      backgroundColor: '#fff'
+    })
+
+    // el.parentNode.querySelector('.ply-PlayerItem_Heatmap-download').classList.add('hide')
+    const selected_actor = el.getAttribute('data-actor-id')
+
+    // Rework the data to work with the heatmap library.
+    const formatted_data = []
+    let min_value = null
+    let max_value = null
+
+    let max_x = null
+    let max_y = null
+    let min_x = null
+    let min_y = null
+
+    Object.keys(data[selected_actor]).forEach(function (item) {
+      const value = data[selected_actor][item]
+      let x = parseInt(item.split(',')[0], 10)
+      let y = parseInt(item.split(',')[1], 10)
+
+      // Rotate the points -90deg
+      const rotation = (Math.PI / 2) * -1
+      const rotatedX = Math.cos(rotation) * x - Math.sin(rotation) * y
+      const rotatedY = Math.sin(rotation) * x + Math.cos(rotation) * y
+
+      x = rotatedX
+      y = rotatedY
+
+      formatted_data.push({
+        x,
+        y,
+        value
+      })
+
+      if (min_value === null || value < min_value) {
+        min_value = value
+      }
+
+      if (max_value === null || value > max_value) {
+        max_value = value
+      }
+
+      if (min_x === null || x < min_x) {
+        min_x = x
+      }
+
+      if (min_y === null || y < min_y) {
+        min_y = y
+      }
+
+      if (max_x === null || x > max_x) {
+        max_x = x
+      }
+
+      if (max_y === null || y > max_y) {
+        max_y = y
+      }
+    })
+
+    // Re-work all of the values to be positive. 🌝
+    min_x = Math.abs(min_x)
+    min_y = Math.abs(min_y)
+    max_x += min_x
+    max_y += min_y
+
+    const reformatted_data = []
+
+    const canvas_width = el.offsetWidth
+    const canvas_height = el.offsetHeight
+
+    const stats = {}
+
+    formatted_data.forEach(function (item) {
+      // Rework the x values to be between 0 and `canvas width`.
+      let offsetX = item.x + min_x
+      offsetX /= max_x / canvas_width
+
+      // Rework the y values to be between 0 and `canvas height`.
+      let offsetY = item.y + min_y
+      offsetY /= max_y / canvas_height
+
+      // Determine the value distribution.
+      if (stats[item.value] === undefined) {
+        stats[item.value] = 1
+      } else {
+        stats[item.value] += 1
+      }
+
+      // Push the data into the final array.
+      reformatted_data.push({
+        x: offsetX,
+        y: offsetY,
+        value: item.value
+      })
+    })
+
+    heatmap.setData({
+      min: Object.keys(stats).shift(),
+      max: Object.keys(stats).pop(),
+      data: reformatted_data
+    })
+  }
+}
+</script>
